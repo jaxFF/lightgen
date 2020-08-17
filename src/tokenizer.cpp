@@ -18,6 +18,11 @@ b32 TokenEquals(token Token, char* Match) {
     return Result;
 }
 
+b32 TokenEquals(token Token, token_type Type) {
+    b32 Result = (Token.Type == Type);
+    return Result;
+}
+
 void Refill(tokenizer *Tokenizer){
     if(Tokenizer->Input.Count == 0) {
         Tokenizer->At[0] = 0;
@@ -56,6 +61,12 @@ tokenizer Tokenize(string Data, char* Filename) {
 tokenizer Tokenize(char* Data);
 tokenizer Tokenize(char* Filename);
 
+token CharToString(token Token) {
+    Token.String = (char*)malloc(sizeof(char) * 1);
+    sprintf(Token.String, "%.*s", 1, Token.Text.Data);
+    return Token;
+}
+
 token GetToken(tokenizer* Tokenizer) {
 	token Token = {};
     Token.Filename = Tokenizer->Filename;
@@ -66,20 +77,26 @@ token GetToken(tokenizer* Tokenizer) {
     AdvanceInput(Tokenizer, 1);
 	switch (C) {
         case '\0': { Token.Type = Token_EndOfStream; } break;
+        case '\n': { Tokenizer->LinesCount++; } break;
 
-        case '(': { Token.Type = Token_OpenParen; } break;
-        case ')': { Token.Type = Token_CloseParen; } break;
-        case ':': { Token.Type = Token_Colon; } break;
-        case ';': { Token.Type = Token_Semicolen; } break;
-        case '*': { Token.Type = Token_Asterik; } break;
-        case '[': { Token.Type = Token_OpenBracket; } break;
-        case ']': { Token.Type = Token_CloseBracket; } break;
-        case '{': { Token.Type = Token_OpenBrace; } break;
-        case '}': { Token.Type = Token_CloseBrace; } break;
-        case '=': { Token.Type = Token_Equals; } break;
-        case ',': { Token.Type = Token_Comma; } break;
-        case '|': { Token.Type = Token_Or; } break;
-        case '#': { Token.Type = Token_Pound; } break;
+        case '(': { Token.Type = Token_OpenParen; CharToString(Token); } break;
+        case ')': { Token.Type = Token_CloseParen; CharToString(Token); } break;
+        case ':': { Token.Type = Token_Colon; CharToString(Token); } break;
+        case ';': { Token.Type = Token_Semicolen; CharToString(Token); } break;
+        case '*': { Token.Type = Token_Asterisk; CharToString(Token); } break;
+        case '[': { Token.Type = Token_OpenBracket; CharToString(Token); } break;
+        case ']': { Token.Type = Token_CloseBracket; CharToString(Token); } break;
+        case '{': { Token.Type = Token_OpenBrace; CharToString(Token); } break;
+        case '}': { Token.Type = Token_CloseBrace; CharToString(Token); } break;
+        case '=': { Token.Type = Token_Equals; CharToString(Token); } break;
+        case '.': { Token.Type = Token_Period; CharToString(Token); } break;
+        case ',': { Token.Type = Token_Comma; CharToString(Token); } break;
+        case '|': { Token.Type = Token_Or; CharToString(Token); } break;
+        case '#': { Token.Type = Token_Pound; CharToString(Token); } break;
+        case '_': { Token.Type = Token_Underline; CharToString(Token); } break;
+        case '~': { Token.Type = Token_Tilde; CharToString(Token); } break;
+        
+        case '`': { Token.Type = Token_Backtick; CharToString(Token); } break;
 
         case '"': { // note(jax): We've got a string
 			Token.Type = Token_String;
@@ -99,21 +116,12 @@ token GetToken(tokenizer* Tokenizer) {
             if (Token.Text.Count &&
                 (Token.Text.Data[0] == '"')) {
                 ++Token.Text.Data;
-                --Token.Text.Count;
+                Token.Text.Count -= 2;
 
-                int TextLength = 0;
-                char* Temp = (char*)malloc(Token.Text.Count);
-                sprintf(Temp, "%s", Token.Text.Data);
-                while (Temp) {
-                    if (*Temp == '\"') {
-                        break;
-                    }
-                    ++TextLength;
-                    ++Temp;
-                }
 
-                Token.String = (char*)malloc(TextLength);
-                sprintf(Token.String, "%.*s", (int)TextLength, Token.Text.Data);
+                __int64 IndentLength = (Tokenizer->Input.Data - Token.Text.Data) - 1;
+                Token.String = (char*)malloc(IndentLength);
+                sprintf(Token.String, "%.*s", (int)IndentLength, Token.Text.Data);
             }
         } break;
 
@@ -202,13 +210,43 @@ token GetToken(tokenizer* Tokenizer) {
     }
 
     ++Tokenizer->TokensCount;
-   // Token.Text.Count = (Tokenizer->Input.Data - Token.Text.Data);
+    Token.Text.Count = (Tokenizer->Input.Data - Token.Text.Data);
     return Token;
 }
 
-token PeekToken(tokenizer* Tokenizer) {
+token PeekToken(tokenizer* Tokenizer, int PeekCount) {
+    token Result = {};
+
+    while (PeekCount--) {
+        Result = GetToken(Tokenizer);
+    }
+    return Result;
+}
+
+token PeekAheadToken(tokenizer* Tokenizer) {
     tokenizer Temp = *Tokenizer;
     token Result = GetToken(Tokenizer);
     *Tokenizer = Temp;
     return Result;
+}
+
+token PeekTokenSkipSpace(tokenizer* Tokenizer) {
+    token Token;
+    u32 Parsing = true;
+    while (Parsing) {
+        Token = GetToken(Tokenizer);
+        switch (Token.Type) {
+            case Token_EndOfLine:
+            case Token_Unknown:
+            case Token_Space: {
+                printf("");
+            } break;
+
+            default: {
+                Parsing = false;
+            } break;
+        }
+    }
+    
+    return Token;
 }

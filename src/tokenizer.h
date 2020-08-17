@@ -18,15 +18,19 @@ enum token_type {
     Token_CloseParen, // )
     Token_Colon, // :
     Token_Semicolen, // ;
-    Token_Asterik, // *
+    Token_Asterisk, // *
     Token_OpenBracket, // [
     Token_CloseBracket, // ]
     Token_OpenBrace, // {
     Token_CloseBrace, // }
-    Token_Equals,
-    Token_Comma,
-    Token_Or,
-    Token_Pound,
+    Token_Period, // .
+    Token_Equals, // =
+    Token_Comma, // ,
+    Token_Or, // |
+    Token_Pound, // #
+    Token_Underline, // _
+    Token_Backtick, // `
+    Token_Tilde, // ~
 
     Token_String,
     Token_Identifier,
@@ -64,8 +68,11 @@ struct tokenizer {
 
 b32 IsTokenValid(token Token);
 b32 TokenEquals(token Token, char* Match);
+b32 TokenEquals(token Token, token_type Type);
 token GetToken(tokenizer* Tokenizer);
-token PeekToken(tokenizer* Tokenizer);
+token PeekToken(tokenizer* Tokenizer, int PeekCount);
+token PeekAheadToken(tokenizer* Tokenizer);
+token PeekTokenSkipSpace(tokenizer* Tokenizer);
 tokenizer Tokenize(string Data, char* Filename);
 
 #endif
