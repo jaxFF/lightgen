@@ -1,0 +1,71 @@
+/* ============ Copyright (c) 2020 by Asteria Development, All rights reserved. ============
+ *  Creator: Jaxon Laing
+ *
+ * Unauthorized copying or distrubution of this file, via any medium is prohibited
+ * without the express permission of the project author or the terms of the license.
+ *
+ * This file is subject to the full license information defined in file
+ * 'LICENSE', which is located in the root of this source code package.
+ */
+
+#ifndef TOKENIZER_H
+#define TOKENIZER_H
+
+enum token_type {
+    Token_Unknown,
+
+    Token_OpenParen, // (
+    Token_CloseParen, // )
+    Token_Colon, // :
+    Token_Semicolen, // ;
+    Token_Asterik, // *
+    Token_OpenBracket, // [
+    Token_CloseBracket, // ]
+    Token_OpenBrace, // {
+    Token_CloseBrace, // }
+    Token_Equals,
+    Token_Comma,
+    Token_Or,
+    Token_Pound,
+
+    Token_String,
+    Token_Identifier,
+    Token_Literal, // Number
+
+    Token_Space,
+    Token_EndOfLine,
+    Token_Comment,
+
+    Token_EndOfStream,
+};
+
+struct token {
+    char* Filename;
+
+    token_type Type;
+    size_t TextLength;
+    string Text;
+    union {
+        char* String;
+        f32 Float;
+        s32 Integer;
+    };
+};
+
+struct tokenizer {
+    char* Filename;
+    u32 LinesCount;
+    u32 TokensCount;
+    u32 TotalCount;
+
+    string Input;
+    char* At;
+};
+
+b32 IsTokenValid(token Token);
+b32 TokenEquals(token Token, char* Match);
+token GetToken(tokenizer* Tokenizer);
+token PeekToken(tokenizer* Tokenizer);
+tokenizer Tokenize(string Data, char* Filename);
+
+#endif
