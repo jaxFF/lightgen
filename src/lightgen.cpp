@@ -43,6 +43,7 @@ typedef intptr_t smm;
 
 #define AllocStruct(type) (type*)malloc(sizeof(type))
 #define AllocCopy(size, source) MemoryCopy(malloc(size), source, size)
+#define ZeroStruct(type) ZeroSize(type, sizeof(type))
 
 #define __BASENAME__ (FindFirstChar(__FILE__, '/') ? FindFirstChar(__FILE__, '/') + 1 : FindFirstChar(__FILE__, '\\') ? FindFirstChar(__FILE__, '\\') + 1 : __FILE__)
 
@@ -424,8 +425,10 @@ global stream OnDemandMemoryStream(stream* Errors = 0) {
 global void DumpStreamToCRT(stream* Source, FILE* Dest = stdout) {
 	char Append[256];
 	for (stream_chunk* Chunk = Source->First; Chunk; Chunk = Chunk->Next) {
-		sprintf(Append, "%s(%d): ", Chunk->File, Chunk->LineNumber);
-		fwrite(Append, StringLength(Append), 1, Dest);
+        if (Chunk->File != 0) {
+		    sprintf(Append, "%s(%d): ", Chunk->File, Chunk->LineNumber);
+		    fwrite(Append, StringLength(Append), 1, Dest);
+        }
 		fwrite(Chunk->Contents, Chunk->ContentsSize, 1, Dest);
 	}
 }
@@ -433,6 +436,12 @@ global void DumpStreamToCRT(stream* Source, FILE* Dest = stdout) {
 //
 //
 //
+
+#define ParseError(Stream, Tokenizer, String, ...) {\
+    Outf_((char*)Tokenizer.Filename, Tokenizer.LinesCount, Stream, "Parse Error: ");\
+    Outf_(0, 0, Stream, String, __VA_ARGS__); \
+    Outf_(0, 0, Stream, "\n"); \
+}
 
 global char* ReadEntireFileIntoMemory(char* FileName) {
     char* Result = 0;
@@ -453,28 +462,161 @@ global char* ReadEntireFileIntoMemory(char* FileName) {
     return Result;
 }
 
+//
+// Page parsing
+//
+
 // Data associated with a page file
 struct PageParseData {
-
+    stream* Out;
 };
 
+enum MarkupToken {
+    MarkupToken_String,
+
+    MarkupToken_Header,
+
+    MarkupToken_LeftBold,
+    MarkupToken_LeftUnderline,
+    MarkupToken_LeftStrikethrough,
+
+    MarkupToken_RightBold,
+    MarkupToken_RightUnderline,
+    MarkupToken_RightStrikethrough
+};
+
+struct MarkupNode {
+    MarkupNode* Next;
+    MarkupToken Type;
+    string Text;
+    union {
+        struct {
+            s32 HCount;
+        } header;
+
+        struct {
+            MarkupNode* First;
+        } unordered_list;
+
+        struct {
+            MarkupNode* First;
+        } ordered_list;
+    };
+};
+
+global MarkupNode* AllocateMarkupNode() {
+    MarkupNode* Node = AllocStruct(MarkupNode);
+    ZeroStruct(Node);
+    return Node;
+}
+
+// This is really just parse markup
 PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
+    MarkupNode* Root = 0;
+    MarkupNode** Last = &Root;
+    MarkupNode* HeaderNode = 0;
+
     PageParseData Result = {};
+
+    s32 HeaderCount = 0; // todo: Create parse errors for this. (if it's above 6 I think)
+
+    b32 BoldLeft = false;
+    b32 UnderlineLeft = false;
+    b32 StrikethroughLeft = false;
 
     b32 Parsing = true;
     while (Parsing) {
         token Token = GetToken(&Tokenizer);
+
         switch (Token.Type) {
             case Token_EndOfStream: {
                 Parsing = false;
             } break;
 
+            case Token_Asterisk: {
+                if (BoldLeft) { // This is a bold right
+                    BoldLeft = false;
+
+                    MarkupNode* Node = AllocateMarkupNode();
+                    Node->Type = MarkupToken_RightBold;
+                    Node->Text = make_string("*");
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                } else { // This is a bold left
+                    BoldLeft = true;
+                    MarkupNode* Node = AllocateMarkupNode();
+                    Node->Type = MarkupToken_LeftBold;
+                    Node->Text = make_string("*");
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                }
+            } break;
+
+            case Token_Underline: {
+                if (UnderlineLeft) { // This is a underline right
+                    UnderlineLeft = false;
+
+                    MarkupNode* Node = AllocateMarkupNode();
+                    Node->Type = MarkupToken_RightUnderline;
+                    Node->Text = make_string("_");
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                } else { // This is an underline left
+                    UnderlineLeft = true;
+                    MarkupNode* Node = AllocateMarkupNode();
+                    Node->Type = MarkupToken_LeftUnderline;
+                    Node->Text = make_string("_");
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                }
+            } break;
+
+            case Token_Tilde: {
+                if (StrikethroughLeft) { // This is a strikethrough right
+                    StrikethroughLeft = false;
+
+                    MarkupNode* Node = AllocateMarkupNode();
+                    Node->Type = MarkupToken_RightStrikethrough;
+                    Node->Text = make_string("_");
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                } else { // This is a strikethrough left
+                    StrikethroughLeft = true;
+                    MarkupNode* Node = AllocateMarkupNode();
+                    Node->Type = MarkupToken_LeftStrikethrough;
+                    Node->Text = make_string("_");
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                }
+            } break; 
+
             case Token_Pound: {
-                printf("");
+                if (HeaderCount == 0) { // Define a new header since we're at the start
+                    MarkupNode* Node = AllocateMarkupNode();
+                    Node->Type = MarkupToken_Header;
+                    Node->header.HCount = HeaderCount;
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+
+                    HeaderNode = Node;
+                }
+
+                HeaderCount++;
             } break;
 
             case Token_Identifier: {
-                printf("%s\n", Token.String);
+                printf("Ident%s\n", Token.String);
+
+                if (HeaderCount != 0) { // Update the nodes count and reset since the header is defined now
+                    HeaderNode->header.HCount = HeaderCount;
+                    HeaderCount = 0;
+                }
+                
+                MarkupNode* Node = AllocateMarkupNode();
+                Node->Type = MarkupToken_String;
+                Node->Text = make_string(Token.String);
+                *Last = Node;
+                Last = &(*Last)->Next;
             } break;
 
             case Token_String: {
@@ -483,6 +625,31 @@ PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
 
             case Token_Unknown:
             default: {
+                // todo: This is custom format testing, probably won't persist.
+                if (StringsMatch((CharToString(Token)).String, "@")) {
+                    Token = GetToken(&Tokenizer);
+                    if (TokenEquals(Token, "Title")) {
+                        // Skip the newline
+                        Token = PeekTokenSkipSpace(&Tokenizer);
+                        if (TokenEquals(Token, Token_OpenBrace)) {
+                            // Skip the whitespace
+                            Token = PeekTokenSkipSpace(&Tokenizer);
+                            if (TokenEquals(Token, Token_String)) {
+                                printf("@Title %s\n", Token.String);
+                                // Skip the newline
+                                Token = PeekTokenSkipSpace(&Tokenizer);
+                                if (!TokenEquals(Token, Token_CloseBrace)) {
+                                    ParseError(Data->Out, Tokenizer, "A title tag expects an closed brace '}'.");
+                                }
+                            }
+                            else {
+                                ParseError(Data->Out, Tokenizer, "A title tag expects an quotation enclosed string.");
+                            }
+                        }
+                    } else {
+                        ParseError(Data->Out, Tokenizer, "A title tag expects an open brace '{'.");
+                    }
+                }
                 printf("");
             } break;
          }
@@ -492,6 +659,8 @@ PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
 }
 // Data associated with a website manifest file
 struct ManifestParseData {
+    stream* Out;
+
     char* SiteHeader;
     char* SiteFooter;
 };
@@ -549,11 +718,17 @@ int HandleDirectory(char* Path) {
                 HandleDirectory(Filename);
             } if (Substring(Entry->d_name, ".manifest")) {
                 tokenizer Tokenizer = Tokenize(make_string(ReadEntireFileIntoMemory(Filename)), Filename);
-                ParseManifestFile(Tokenizer, 0);
+                ManifestParseData* Data = AllocStruct(ManifestParseData);
+                Data->Out = &OnDemandMemoryStream();
+                ParseManifestFile(Tokenizer, Data);
+                DumpStreamToCRT(Data->Out);
             }
             else if (Substring(Entry->d_name, ".lgs")) {
                 tokenizer Tokenizer = Tokenize(make_string(ReadEntireFileIntoMemory(Filename)), Filename);
-                ParsePageFile(Tokenizer, 0);
+                PageParseData* Data = AllocStruct(PageParseData);
+                Data->Out = &OnDemandMemoryStream();
+                ParsePageFile(Tokenizer, Data);
+                DumpStreamToCRT(Data->Out);
             }
 
             printf("%s\n", Filename);
