@@ -26,10 +26,10 @@ IF "%Compiler%"=="" (set Compiler=msvc)
 IF "%BuildType%"=="clean" (goto clean)
 
 
-set CommonWarningsMSVC=-wd4302 -wd4311 -wd4201 -wd4100 -wd4189 -wd4505 -wd4164 -wd4127 -wd4018 -wd4244 -wd4146 -wd4700
+set CommonWarningsMSVC=-wd4302 -wd4311 -wd4201 -wd4100 -wd4189 -wd4505 -wd4164 -wd4127 -wd4018 -wd4244 -wd4146 -wd4700 -wd4996
 set CommonWarningsClang=-Wno-writable-strings -Wno-unused-variable -Wno-pointer-to-int-cast -Wno-pointer-bool-conversion -Wno-unused-command-line-argument -Wno-constant-logical-operand -Wno-unknown-pragmas -Wno-missing-braces -Wno-varargs -Wno-unused-function -Wno-ignored-attributes %CommonWarningsMSVC%
-set CommonCompilerFlags=-DPLATFORM_WINDOWS=1 -fp:fast -fp:except- -nologo -Gm- -GR- -EHsc- -EHa- -MP -Od -Oi -FC -Zi -GS- -Gs9999999 -WX -W3 -D_CRT_SECURE_NO_WARNINGS
-set CommonLinkerFlags= -STACK:0x100000,0x100000 -incremental:no -opt:ref -nodefaultlib libcmt.lib libvcruntime.lib libucrt.lib user32.lib gdi32.lib winmm.lib kernel32.lib shlwapi.lib opengl32.lib imm32.lib
+set CommonCompilerFlags=-DPLATFORM_WINDOWS=1 -fp:fast -fp:except- -nologo -Gm- -GR- -EHsc- -EHa- -MP -Od -Oi -FC -Zi -GS- -Gs9999999 -WX -W3
+set CommonLinkerFlags= -incremental:no -opt:ref user32.lib gdi32.lib winmm.lib kernel32.lib shlwapi.lib
 
 IF "%BuildType%"=="release" (
     set CommonCompilerFlags=%CommonCompilerFlags% -O2

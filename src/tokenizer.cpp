@@ -164,7 +164,7 @@ token GetToken(tokenizer* Tokenizer) {
                 }
             } else if (IsAlphabetical(C)) {
 				Token.Type = Token_Identifier;
-                while (IsAlphabetical(Tokenizer->At[0]) || IsNumeric(Tokenizer->At[0]) || (Tokenizer->At[0] == '_')) {
+                while (IsAlphabetical(Tokenizer->At[0]) || IsNumeric(Tokenizer->At[0]) || IsPunctuation(Tokenizer->At[0])) {
                     AdvanceInput(Tokenizer, 1);
                 }
 
@@ -202,7 +202,7 @@ token GetToken(tokenizer* Tokenizer) {
     }
 
     ++Tokenizer->TokensCount;
-    Token.Text.Count = (Tokenizer->Input.Data - Token.Text.Data);
+   // Token.Text.Count = (Tokenizer->Input.Data - Token.Text.Data);
     return Token;
 }
 

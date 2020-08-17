@@ -11,6 +11,10 @@
 #include <dirent.h>
 #endif
 
+// Forward declarations for macro code
+void* MemoryCopy(void* _Dest, void* _Source, size_t Size);
+char* FindFirstChar(char* String, int _Char);
+
 #define global static
 
 typedef int8_t s8;
@@ -30,8 +34,17 @@ typedef s32 b32;
 typedef uintptr_t umm;
 typedef intptr_t smm;
 
+#define ArrayCount(Array) (sizeof(Array) / sizeof((Array)[0]))
+
+#define Assert(Expression) if (!(Expression)) { *(int*)(0); }
+
 #define Minimum(A, B) ((A < B) ? (A) : (B))
 #define Maximum(A, B) ((A > B) ? (A) : (B))
+
+#define AllocStruct(type) (type*)malloc(sizeof(type))
+#define AllocCopy(size, source) MemoryCopy(malloc(size), source, size)
+
+#define __BASENAME__ (FindFirstChar(__FILE__, '/') ? FindFirstChar(__FILE__, '/') + 1 : FindFirstChar(__FILE__, '\\') ? FindFirstChar(__FILE__, '\\') + 1 : __FILE__)
 
 global b32 IsSpacing(char C) {
     b32 Result = ((C == ' ') || (C == '\t') || (C == '\v') ||(C == '\f'));
@@ -55,6 +68,19 @@ global b32 IsAlphabetical(char Value) {
 
 global b32 IsNumeric(char Value) {
     b32 Result = ((Value >= '0') && (Value <= '9'));
+    return Result;
+}
+
+global b32 IsSymbolic(char Value) {
+    b32 Result = (Value == '*' || Value == '|' 
+                || Value == ',' || Value == '.'
+                || Value == ';' || Value == ':'
+                || Value == '=' || Value == '!' || Value == '?');
+    return Result;
+}
+
+global b32 IsPunctuation(char Value) {
+    b32 Result = (Value == ',' || Value == '.' || Value == '!' || Value == '?');
     return Result;
 }
 
@@ -193,35 +219,371 @@ global char* Substring(char* Source, char* String) {
     return NULL;
 }
 
+// note: _Char is expected to be an ASCII character
+global char* FindFirstChar(char* String, int _Char) {
+    char Char = (char)_Char;
+    while (*String != Char) {
+        if (!*String++) {
+            return NULL;
+        }
+    }
+    return (char*)String;
+}
+
+// strstr()
+global char* FindFirstString(char* _Source, char* _String) {
+    while (*_Source != 0) {
+        char* Source, *String;
+        for (Source = _Source, String = _String; *String != 0 && (*Source == *String); ++Source, ++String);
+
+        if (*String == 0) {
+            return _Source;
+        }
+
+        _Source++;
+    }
+
+    return nullptr;
+}
+
+global void SolveRelativeDirectory(char* Path) {
+    ConvertPathSlashes(Path, '/', PATH_SEPERATOR);
+    for (;;) {
+        char* Relative = FindFirstString(Path + 1, "/../");
+
+        char* Previous = Relative - 1;
+        while ((Previous > Path) && (Previous[0] != '/')) {
+            Previous--;
+        }
+
+        char* In = Relative + 3;
+        for (;;) {
+            *Previous = *In;
+            if (In[0]) {
+                ++Previous;
+                ++In;
+            }
+            else break;
+        }
+
+        if (!Substring(Path, "../"))
+            break;
+    }
+}
+
 #include "tokenizer.h"
 #include "tokenizer.cpp"
+#include "shared.cpp"
+
+//
+// Stream code
+//
+
+struct stream_chunk {
+	char* File;
+	u32 LineNumber;
+
+	void* Contents;
+	size_t ContentsSize;
+
+	stream_chunk* Next;
+};
+
+struct stream {
+	stream* Errors;
+
+	void* Contents;
+	size_t ContentsSize;
+
+	uint32_t BitCount;
+	uint32_t BitBuf;
+
+	bool HasUnderflowed;
+
+	stream_chunk* First;
+	stream_chunk* Last;
+};
+
+#define Outf(...) Outf_((char*)__BASENAME__, __LINE__, __VA_ARGS__)
+void Outf_(char* FileName, uint32_t LineNumber, stream* Dest, char* Format, ...);
+
+stream_chunk* AppendChunk(stream* Stream, size_t Size, void* Contents) {
+	stream_chunk* Chunk = AllocStruct(stream_chunk);
+
+	Chunk->ContentsSize = Size;
+	Chunk->Contents = Contents;
+	Chunk->Next = 0;
+
+	Stream->Last =
+		(((Stream->Last) ? Stream->Last->Next : Stream->First) = Chunk);
+
+	return Chunk;
+}
+
+void RefillIfNeccessary(stream* file) {
+	// todo(jax): use free list to recycle chunks if we ever care
+
+	if ((file->ContentsSize == 0) && file->First) {
+		stream_chunk* This = file->First;
+		file->ContentsSize = This->ContentsSize;
+		file->Contents = This->Contents;
+		file->First = This->Next;
+	}
+}
+
+#define Consume(Contents, Type) (Type*)ConsumeSize(Contents, sizeof(Type))
+void* ConsumeSize(stream* file, u32 Size) {
+	void* Result = 0;
+
+	RefillIfNeccessary(file);
+
+	if (file->ContentsSize >= Size) {
+		Result = file->Contents;
+		file->Contents = (u8*)file->Contents + Size;
+		file->ContentsSize -= Size;
+	}
+	else {
+		Outf(file->Errors, "FILE ERROR: underflown buffer!\n");
+		file->ContentsSize = 0;
+		file->HasUnderflowed = true;
+	}
+
+	Assert(!file->HasUnderflowed);
+
+	return Result;
+}
+
+
+u32 PeekBits(stream* Buf, u32 BitCount) {
+	Assert(BitCount <= 32);
+
+	u32 Result = 0;
+	while ((Buf->BitCount < BitCount) && !Buf->HasUnderflowed) {
+		u32 Byte = *Consume(Buf, u8);
+		Buf->BitBuf |= (Byte << Buf->BitCount);
+		Buf->BitCount += 8;
+	}
+
+	Result = Buf->BitBuf & ((1 << BitCount) - 1);
+
+	return Result;
+}
+
+void DiscardBits(stream* Buf, u32 BitCount) {
+	Buf->BitCount -= BitCount;
+	Buf->BitBuf >>= BitCount;
+}
+
+u32 ConsumeBits(stream* Buf, u32 BitCount) {
+	u32 Result = PeekBits(Buf, BitCount);
+	DiscardBits(Buf, BitCount);
+
+	return Result;
+}
+
+void FlushByte(stream* Buf) {
+	u32 FlushCount = (Buf->BitCount % 8);
+	ConsumeBits(Buf, FlushCount);
+}
+
+u32 ReverseBits(u32 V, u32 BitCount) {
+	u32 Result = 0;
+
+	// Speed(jax): Really bad way to flip these bits
+	for (u32 BitIndex = 0; BitIndex <= (BitCount / 2); ++BitIndex) {
+		u32 InversionOp = (BitCount - (BitIndex + 1));
+		Result |= ((V >> BitIndex) & 0x1) << InversionOp;
+		Result |= ((V >> InversionOp) & 0x1) << BitIndex;
+	}
+
+	return Result;
+}
+
+global void Outf_(char* FileName, uint32_t LineNumber, stream* Dest, char* Format, ...) {
+	va_list ArgList;
+
+	char Buffer[1024];
+
+	va_start(ArgList, Format);
+	size_t Size = FormatArgList(sizeof(Buffer), Buffer, Format, ArgList);
+	va_end(ArgList);
+
+	void* Contents = AllocCopy(Size, (void*)Buffer);
+	stream_chunk* Chunk = AppendChunk(Dest, Size, Contents);
+	Chunk->File = FileName;
+	Chunk->LineNumber = LineNumber;
+}
+
+global stream OnDemandMemoryStream(stream* Errors = 0) {
+	stream Result = {};
+	Result.Errors = Errors;
+
+	return Result;
+}
+
+global void DumpStreamToCRT(stream* Source, FILE* Dest = stdout) {
+	char Append[256];
+	for (stream_chunk* Chunk = Source->First; Chunk; Chunk = Chunk->Next) {
+		sprintf(Append, "%s(%d): ", Chunk->File, Chunk->LineNumber);
+		fwrite(Append, StringLength(Append), 1, Dest);
+		fwrite(Chunk->Contents, Chunk->ContentsSize, 1, Dest);
+	}
+}
+
+//
+//
+//
+
+global char* ReadEntireFileIntoMemory(char* FileName) {
+    char* Result = 0;
+
+    FILE* File = fopen(FileName, "r");
+	if (File) {
+		fseek(File, 0, SEEK_END);
+		size_t FileSize = ftell(File);
+		fseek(File, 0, SEEK_SET);
+
+		Result = (char*)malloc(FileSize + 1);
+		fread(Result, FileSize, 1, File);
+		Result[FileSize] = 0;
+
+		fclose(File);
+	}
+
+    return Result;
+}
+
+// Data associated with a page file
+struct PageParseData {
+
+};
+
+PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
+    PageParseData Result = {};
+
+    b32 Parsing = true;
+    while (Parsing) {
+        token Token = GetToken(&Tokenizer);
+        switch (Token.Type) {
+            case Token_EndOfStream: {
+                Parsing = false;
+            } break;
+
+            case Token_Pound: {
+                printf("");
+            } break;
+
+            case Token_Identifier: {
+                printf("%s\n", Token.String);
+            } break;
+
+            case Token_String: {
+                printf("%s\n", Token.String);
+            } break;
+
+            case Token_Unknown:
+            default: {
+                printf("");
+            } break;
+         }
+    }
+
+    return Result;
+}
+// Data associated with a website manifest file
+struct ManifestParseData {
+    char* SiteHeader;
+    char* SiteFooter;
+};
+
+ManifestParseData ParseManifestFile(tokenizer Tokenizer, ManifestParseData* Data) {
+    ManifestParseData Result = {};
+
+    b32 Parsing = true;
+    while (Parsing) {
+        token Token = GetToken(&Tokenizer);
+        switch (Token.Type) {
+        case Token_EndOfStream: {
+            Parsing = false;
+        } break;
+
+        case Token_Pound: {
+            printf("");
+        } break;
+
+        case Token_Identifier: {
+            printf("%s\n", Token.String);
+        } break;
+
+        case Token_String: {
+            printf("%s\n", Token.String);
+        } break;
+
+        case Token_Unknown:
+        default: {
+            printf("");
+        } break;
+        }
+    }
+
+    return Result;
+}
+
+int HandleDirectory(char* Path) {
+    DIR* Dir;
+    struct dirent* Entry;
+
+    ConvertPathSlashes(Path);
+    if ((Dir = opendir(Path)) != NULL) {
+        while ((Entry = readdir(Dir)) != NULL) {
+            // Get the absolute filename, pretty hacky code...
+            char* Filename = StringCopy(Path);
+            Filename = StringAppend(Filename, 256, "\\");
+            Filename = StringAppend(Filename, 256, Entry->d_name);
+
+            if (Entry->d_type == DT_DIR) {   
+                if (Substring(Entry->d_name, ".")) {
+                    continue;
+                }
+
+                HandleDirectory(Filename);
+            } if (Substring(Entry->d_name, ".manifest")) {
+                tokenizer Tokenizer = Tokenize(make_string(ReadEntireFileIntoMemory(Filename)), Filename);
+                ParseManifestFile(Tokenizer, 0);
+            }
+            else if (Substring(Entry->d_name, ".lgs")) {
+                tokenizer Tokenizer = Tokenize(make_string(ReadEntireFileIntoMemory(Filename)), Filename);
+                ParsePageFile(Tokenizer, 0);
+            }
+
+            printf("%s\n", Filename);
+        }
+        closedir(Dir);
+    }
+    else {
+        perror("");
+        return EXIT_FAILURE;
+    }
+
+    return 0;
+}
 
 int main(int ArgCount, char** Args) {
     if (ArgCount >= 2) {
-        DIR *dir;
-        struct dirent *ent;
-
+        // This code is pretty bad w/e
         char* Directory = (char*)malloc(sizeof(char) * 256);
         _getcwd(Directory, 256);
 
         Directory = StringAppend(Directory, 256, "\\");
         Directory = StringAppend(Directory, 256, Args[1]);
 
+        SolveRelativeDirectory(Directory);
         ConvertPathSlashes(Directory);
-        //char* fullPath = realpath(Args[2], cwd);
-        if ((dir = opendir (Directory)) != NULL) {
-            /* print all the files and directories within directory */
-            while ((ent = readdir (dir)) != NULL) {
-                printf ("%s\n", ent->d_name);
-            }
-            closedir (dir);
-        } else {
-            perror ("");
-            return EXIT_FAILURE;
-        }
+        HandleDirectory(Directory);
     } else {
         fprintf(stderr, "Usage: %s <site directory>\n", Args[0]);
+        return 1;
     }
 
-    return 1;
+    return 0;
 }
