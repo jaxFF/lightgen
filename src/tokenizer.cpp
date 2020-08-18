@@ -77,7 +77,6 @@ token GetToken(tokenizer* Tokenizer) {
     AdvanceInput(Tokenizer, 1);
 	switch (C) {
         case '\0': { Token.Type = Token_EndOfStream; } break;
-        case '\n': { Tokenizer->LinesCount++; } break;
 
         case '(': { Token.Type = Token_OpenParen; CharToString(Token); } break;
         case ')': { Token.Type = Token_CloseParen; CharToString(Token); } break;
@@ -126,12 +125,7 @@ token GetToken(tokenizer* Tokenizer) {
         } break;
 
         default: {
-            if (IsSpacing(C)) {
-                Token.Type = Token_Space;
-                while (IsSpacing(Tokenizer->At[0])) {
-                    AdvanceInput(Tokenizer, 1);
-                }
-            } else if (IsEndOfLine(C)) {
+            if (IsEndOfLine(C)) {
                 Token.Type =  Token_EndOfLine;
                 if(((C == '\r') &&
                     (Tokenizer->At[0] == '\n')) ||
@@ -141,6 +135,11 @@ token GetToken(tokenizer* Tokenizer) {
                 }
                 
                 ++Tokenizer->LinesCount;
+            } else if (IsSpacing(C)) {
+                Token.Type = Token_Space;
+                while (IsSpacing(Tokenizer->At[0])) {
+                    AdvanceInput(Tokenizer, 1);
+                }
             } else if((C == '/') && (Tokenizer->At[0] == '/')) {
                 Token.Type = Token_Comment;
                 
@@ -225,8 +224,7 @@ token PeekToken(tokenizer* Tokenizer, int PeekCount) {
 
 token PeekAheadToken(tokenizer* Tokenizer) {
     tokenizer Temp = *Tokenizer;
-    token Result = GetToken(Tokenizer);
-    *Tokenizer = Temp;
+    token Result = GetToken(&Temp);
     return Result;
 }
 
@@ -236,7 +234,6 @@ token PeekTokenSkipSpace(tokenizer* Tokenizer) {
     while (Parsing) {
         Token = GetToken(Tokenizer);
         switch (Token.Type) {
-            case Token_EndOfLine:
             case Token_Unknown:
             case Token_Space: {
                 printf("");

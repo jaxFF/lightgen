@@ -231,6 +231,21 @@ global char* FindFirstChar(char* String, int _Char) {
     return (char*)String;
 }
 
+global char* FindLastChar(char* String, int _Char) {
+    char Char = (char)_Char;
+    if (Char == 0)
+        return FindFirstChar(String, _Char);
+
+    char Found;
+    char* Ptr = nullptr;
+    while ((Ptr = FindFirstChar(String, _Char)) != 0) {
+        Found = *Ptr;
+        String = Ptr + 1;
+    }
+
+    return (char*)String;
+}
+
 // strstr()
 global char* FindFirstString(char* _Source, char* _String) {
     while (*_Source != 0) {
@@ -270,6 +285,8 @@ global void SolveRelativeDirectory(char* Path) {
         if (!Substring(Path, "../"))
             break;
     }
+    
+    ConvertPathSlashes(Path);
 }
 
 #include "tokenizer.h"
@@ -466,28 +483,27 @@ global char* ReadEntireFileIntoMemory(char* FileName) {
 // Page parsing
 //
 
-// Data associated with a page file
-struct PageParseData {
-    stream* Out;
+enum ASTPageToken {
+    ASTPageToken_String,
+    ASTPageToken_NewLine,
+
+    ASTPageToken_Header,
+    ASTPageToken_BlockQuote,
+
+    ASTPageToken_LeftBold,
+    ASTPageToken_LeftUnderline,
+    ASTPageToken_LeftStrikethrough,
+    ASTPageToken_LeftItalics,
+
+    ASTPageToken_RightBold,
+    ASTPageToken_RightUnderline,
+    ASTPageToken_RightStrikethrough,
+    ASTPageToken_RightItalics
 };
 
-enum MarkupToken {
-    MarkupToken_String,
-
-    MarkupToken_Header,
-
-    MarkupToken_LeftBold,
-    MarkupToken_LeftUnderline,
-    MarkupToken_LeftStrikethrough,
-
-    MarkupToken_RightBold,
-    MarkupToken_RightUnderline,
-    MarkupToken_RightStrikethrough
-};
-
-struct MarkupNode {
-    MarkupNode* Next;
-    MarkupToken Type;
+struct AST_PageNode {
+    AST_PageNode* Next;
+    ASTPageToken Type;
     string Text;
     union {
         struct {
@@ -495,34 +511,76 @@ struct MarkupNode {
         } header;
 
         struct {
-            MarkupNode* First;
+            AST_PageNode* First;
         } unordered_list;
 
         struct {
-            MarkupNode* First;
+            AST_PageNode* First;
         } ordered_list;
     };
 };
 
-global MarkupNode* AllocateMarkupNode() {
-    MarkupNode* Node = AllocStruct(MarkupNode);
+// Data associated with a page file
+struct PageParseArguments {
+    stream* Out;
+
+    char* Filename;
+    char* BaseFilename;
+    char* HTMLOutputFilename;
+    char* FilenameNoExtension;
+};
+
+struct ProcessedPage {
+    AST_PageNode* Root;
+
+    char* Filename;
+    char* BaseFilename;
+    char* HTMLOutputFilename;
+    char* FilenameNoExtension;
+};
+
+// Data associated with a website manifest file
+struct ManifestParseArguments {
+    stream* Out;
+
+    char* Filename;
+};
+
+struct ProcessedManifest {
+    char* Filename;
+
+    char* SiteTitle;
+    char* SiteAbstract;
+    char* SiteURL;
+
+    char* SiteHeader;
+    char* SiteFooter;
+};
+
+global AST_PageNode* AllocateASTPageNode() {
+    AST_PageNode* Node = AllocStruct(AST_PageNode);
     ZeroStruct(Node);
     return Node;
 }
 
-// This is really just parse markup
-PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
-    MarkupNode* Root = 0;
-    MarkupNode** Last = &Root;
-    MarkupNode* HeaderNode = 0;
+ProcessedPage ParsePageFile(tokenizer Tokenizer, PageParseArguments* Data) {
+    AST_PageNode* Root = 0;
+    AST_PageNode** Last = &Root;
 
-    PageParseData Result = {};
+    AST_PageNode* HeaderNode = 0;
+
+    ProcessedPage Result = {};
+    Result.Filename = StringCopy(Data->Filename);
+    Result.BaseFilename = StringCopy(Data->BaseFilename);
+    Result.FilenameNoExtension = StringCopy(Data->FilenameNoExtension);
+    Result.HTMLOutputFilename = StringCopy(Data->HTMLOutputFilename);
 
     s32 HeaderCount = 0; // todo: Create parse errors for this. (if it's above 6 I think)
 
     b32 BoldLeft = false;
     b32 UnderlineLeft = false;
     b32 StrikethroughLeft = false;
+    b32 ItalicsLeft = false;
 
     b32 Parsing = true;
     while (Parsing) {
@@ -533,58 +591,102 @@ PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
                 Parsing = false;
             } break;
 
+            case Token_EndOfLine: {
+                AST_PageNode* Node = AllocateASTPageNode();
+                Node->Type = ASTPageToken_NewLine;
+                *Last = Node;
+                Last = &(*Last)->Next;
+            } break;
+
             case Token_Asterisk: {
-                if (BoldLeft) { // This is a bold right
+                if (BoldLeft && TokenEquals(GetToken(&Tokenizer), Token_Asterisk)) { // This is a bold right
+                    // Actually increment the tokenizer now that we've checked
+                    //Token = GetToken(&Tokenizer);
+                    
                     BoldLeft = false;
 
-                    MarkupNode* Node = AllocateMarkupNode();
-                    Node->Type = MarkupToken_RightBold;
-                    Node->Text = make_string("*");
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_RightBold;
                     *Last = Node;
                     Last = &(*Last)->Next;
-                } else { // This is a bold left
+                } else if (TokenEquals(GetToken(&Tokenizer), Token_Asterisk)) { // This is a bold left
+                    // Actually increment the tokenizer now that we've checked
+                    //Token = GetToken(&Tokenizer);
+                    
                     BoldLeft = true;
-                    MarkupNode* Node = AllocateMarkupNode();
-                    Node->Type = MarkupToken_LeftBold;
-                    Node->Text = make_string("*");
+
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_LeftBold;
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                } else if (ItalicsLeft) { // This is a italics right because one Asterisk
+                    ItalicsLeft = false;
+
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_RightItalics;
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                } else { // This is a italics left because one Asterisk
+                    ItalicsLeft = true;
+
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_LeftItalics;
                     *Last = Node;
                     Last = &(*Last)->Next;
                 }
             } break;
 
             case Token_Underline: {
-                if (UnderlineLeft) { // This is a underline right
+                if (UnderlineLeft && TokenEquals(GetToken(&Tokenizer), Token_Underline)) {
+                    // Actually increment the tokenizer now that we've checked
+                    //Token = GetToken(&Tokenizer);
+
+                    // This is a underline right
                     UnderlineLeft = false;
 
-                    MarkupNode* Node = AllocateMarkupNode();
-                    Node->Type = MarkupToken_RightUnderline;
-                    Node->Text = make_string("_");
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_RightUnderline;
                     *Last = Node;
                     Last = &(*Last)->Next;
-                } else { // This is an underline left
+                } else if (TokenEquals(GetToken(&Tokenizer), Token_Underline)) {
+                    // Actually increment the tokenizer now that we've checked
+                    //Token = GetToken(&Tokenizer);
+                    
                     UnderlineLeft = true;
-                    MarkupNode* Node = AllocateMarkupNode();
-                    Node->Type = MarkupToken_LeftUnderline;
-                    Node->Text = make_string("_");
+
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_LeftUnderline;
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                } else if (ItalicsLeft) {  // This is an italics right
+                    ItalicsLeft = false;
+
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_RightItalics;
+                    *Last = Node;
+                    Last = &(*Last)->Next;
+                } else { // This is an italics left
+                    ItalicsLeft = true;
+
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_LeftItalics;
                     *Last = Node;
                     Last = &(*Last)->Next;
                 }
             } break;
 
             case Token_Tilde: {
-                if (StrikethroughLeft) { // This is a strikethrough right
+                if (StrikethroughLeft && TokenEquals(GetToken(&Tokenizer), Token_Tilde)) { // This is a strikethrough right
                     StrikethroughLeft = false;
 
-                    MarkupNode* Node = AllocateMarkupNode();
-                    Node->Type = MarkupToken_RightStrikethrough;
-                    Node->Text = make_string("_");
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_RightStrikethrough;
                     *Last = Node;
                     Last = &(*Last)->Next;
-                } else { // This is a strikethrough left
+                } else if (TokenEquals(GetToken(&Tokenizer), Token_Tilde)) { // This is a strikethrough left
                     StrikethroughLeft = true;
-                    MarkupNode* Node = AllocateMarkupNode();
-                    Node->Type = MarkupToken_LeftStrikethrough;
-                    Node->Text = make_string("_");
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_LeftStrikethrough;
                     *Last = Node;
                     Last = &(*Last)->Next;
                 }
@@ -592,8 +694,8 @@ PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
 
             case Token_Pound: {
                 if (HeaderCount == 0) { // Define a new header since we're at the start
-                    MarkupNode* Node = AllocateMarkupNode();
-                    Node->Type = MarkupToken_Header;
+                    AST_PageNode* Node = AllocateASTPageNode();
+                    Node->Type = ASTPageToken_Header;
                     Node->header.HCount = HeaderCount;
                     *Last = Node;
                     Last = &(*Last)->Next;
@@ -612,8 +714,8 @@ PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
                     HeaderCount = 0;
                 }
                 
-                MarkupNode* Node = AllocateMarkupNode();
-                Node->Type = MarkupToken_String;
+                AST_PageNode* Node = AllocateASTPageNode();
+                Node->Type = ASTPageToken_String;
                 Node->Text = make_string(Token.String);
                 *Last = Node;
                 Last = &(*Last)->Next;
@@ -625,48 +727,50 @@ PageParseData ParsePageFile(tokenizer Tokenizer, PageParseData* Data) {
 
             case Token_Unknown:
             default: {
-                // todo: This is custom format testing, probably won't persist.
-                if (StringsMatch((CharToString(Token)).String, "@")) {
-                    Token = GetToken(&Tokenizer);
-                    if (TokenEquals(Token, "Title")) {
-                        // Skip the newline
-                        Token = PeekTokenSkipSpace(&Tokenizer);
-                        if (TokenEquals(Token, Token_OpenBrace)) {
-                            // Skip the whitespace
-                            Token = PeekTokenSkipSpace(&Tokenizer);
-                            if (TokenEquals(Token, Token_String)) {
-                                printf("@Title %s\n", Token.String);
-                                // Skip the newline
-                                Token = PeekTokenSkipSpace(&Tokenizer);
-                                if (!TokenEquals(Token, Token_CloseBrace)) {
-                                    ParseError(Data->Out, Tokenizer, "A title tag expects an closed brace '}'.");
-                                }
-                            }
-                            else {
-                                ParseError(Data->Out, Tokenizer, "A title tag expects an quotation enclosed string.");
-                            }
-                        }
-                    } else {
-                        ParseError(Data->Out, Tokenizer, "A title tag expects an open brace '{'.");
-                    }
+                if (StringsMatch((CharToString(Token)).String, ">")) {
+                    Token = PeekTokenSkipSpace(&Tokenizer);
                 }
                 printf("");
             } break;
          }
     }
 
+    Result.Root = Root;
     return Result;
 }
-// Data associated with a website manifest file
-struct ManifestParseData {
-    stream* Out;
 
-    char* SiteHeader;
-    char* SiteFooter;
-};
+global void OutputHTMLHeader(FILE* Out, ProcessedPage* Page) {
+    fprintf(Out, "<!DOCTYPE html>\n");
+    fprintf(Out, "<html lang=\"en\">\n");
+    fprintf(Out, "<meta http-equiv=\"content-type\"; content=\"text/html\"; charset=\"UTF-8\">\n");
+    fprintf(Out, "<head>\n");
+    fprintf(Out, "<title>Lightgen</title>\n");
+    fprintf(Out, "</head>\n");
+    fprintf(Out, "<body>\n");
+}
 
-ManifestParseData ParseManifestFile(tokenizer Tokenizer, ManifestParseData* Data) {
-    ManifestParseData Result = {};
+global void OutputHTMLFooter(FILE* Out, ProcessedPage* Page) {
+    fprintf(Out, "</body>\n");
+    fprintf(Out, "</html>\n");
+}
+
+global void OutputHTMLFromPageSyntaxTree(AST_PageNode* Node, FILE* Out, ProcessedPage* Pages, s32 PageCount) {
+    b32 Paragraph = false;
+
+    AST_PageNode* Prev = 0;
+    for (; Node; Prev = Node, Node = Node->Next) {
+        switch (Node->Type) {
+            case ASTPageToken_Header: {
+                fprintf(Out, "<h%d>%.*s</h%d>\n", Node->header.HCount, (int)Node->Text.Count, Node->Text.Data, (int)Node->header.HCount);
+            } break;
+        }
+    }
+}
+
+// Manifest format will look like https://github.com/jgaa/stbl/blob/master/examples/bootstrap/stbl.conf
+ProcessedManifest ParseManifestFile(tokenizer Tokenizer, ManifestParseArguments* Data) {
+    ProcessedManifest Result = {};
+    Result.Filename = Data->Filename;
 
     b32 Parsing = true;
     while (Parsing) {
@@ -698,7 +802,25 @@ ManifestParseData ParseManifestFile(tokenizer Tokenizer, ManifestParseData* Data
     return Result;
 }
 
-int HandleDirectory(char* Path) {
+global u32 PageCount;
+global ProcessedPage Pages[8096];
+global ProcessedManifest SiteManifest;
+
+ProcessedPage ProcessPage(char* Filename, tokenizer Tokenizer, PageParseArguments* Args) {
+    Args->Out = &OnDemandMemoryStream();
+    ProcessedPage Result = ParsePageFile(Tokenizer, Args);
+    DumpStreamToCRT(Args->Out);
+    return Result;
+}
+
+ProcessedManifest ProcessManifest(char* Filename, tokenizer Tokenizer, ManifestParseArguments* Args) {
+    Args->Out = &OnDemandMemoryStream();
+    ProcessedManifest Result = ParseManifestFile(Tokenizer, Args);
+    DumpStreamToCRT(Args->Out);
+    return Result;
+}
+
+int ProcessDirectory(char* Path) {
     DIR* Dir;
     struct dirent* Entry;
 
@@ -709,26 +831,51 @@ int HandleDirectory(char* Path) {
             char* Filename = StringCopy(Path);
             Filename = StringAppend(Filename, 256, "\\");
             Filename = StringAppend(Filename, 256, Entry->d_name);
+            ConvertPathSlashes(Path);
 
             if (Entry->d_type == DT_DIR) {   
                 if (Substring(Entry->d_name, ".")) {
                     continue;
                 }
 
-                HandleDirectory(Filename);
-            } if (Substring(Entry->d_name, ".manifest")) {
-                tokenizer Tokenizer = Tokenize(make_string(ReadEntireFileIntoMemory(Filename)), Filename);
-                ManifestParseData* Data = AllocStruct(ManifestParseData);
-                Data->Out = &OnDemandMemoryStream();
-                ParseManifestFile(Tokenizer, Data);
-                DumpStreamToCRT(Data->Out);
-            }
-            else if (Substring(Entry->d_name, ".lgs")) {
-                tokenizer Tokenizer = Tokenize(make_string(ReadEntireFileIntoMemory(Filename)), Filename);
-                PageParseData* Data = AllocStruct(PageParseData);
-                Data->Out = &OnDemandMemoryStream();
-                ParsePageFile(Tokenizer, Data);
-                DumpStreamToCRT(Data->Out);
+                ProcessDirectory(Filename);
+            } else if (Substring(Entry->d_name, ".manifest")) {
+                string FileData = make_string(ReadEntireFileIntoMemory(Filename));
+                tokenizer Tokenizer = Tokenize(FileData, Filename);
+
+                ManifestParseArguments Args = {};
+                Args.Filename = Filename;
+                ProcessedManifest Manifest = ProcessManifest(Filename, Tokenizer, &Args);
+
+                SiteManifest = Manifest;
+            } else if (Substring(Entry->d_name, ".lgs")) {
+                string FileData = make_string(ReadEntireFileIntoMemory(Filename));
+                tokenizer Tokenizer = Tokenize(FileData, Filename);
+
+                char* BaseFilename = Entry->d_name;
+                char* FilenameNoExtension = StringCopy(BaseFilename);
+                char HTMLOutputFilename[256] = {};
+
+                // Remove the Dot from FilenameNoExtension
+                char* Dot = FindLastChar(FilenameNoExtension, '.');
+                Dot[-1] = 0; 
+
+                sprintf(HTMLOutputFilename, "%s/../", Path);
+                SolveRelativeDirectory(HTMLOutputFilename);
+                sprintf(HTMLOutputFilename, "%sgenerated\\%s.html", HTMLOutputFilename, FilenameNoExtension);
+                ConvertPathSlashes(HTMLOutputFilename);
+
+                PageParseArguments Args = {};
+                Args.Filename = Filename;
+                Args.BaseFilename = BaseFilename;
+                Args.FilenameNoExtension = FilenameNoExtension;
+                Args.HTMLOutputFilename = HTMLOutputFilename;
+                ProcessedPage Page = ProcessPage(Filename, Tokenizer, &Args);
+
+                if (PageCount < ArrayCount(Pages)) {
+                    Pages[PageCount++] = Page;
+                }
+                printf("%s\n", Filename);
             }
 
             printf("%s\n", Filename);
@@ -743,6 +890,8 @@ int HandleDirectory(char* Path) {
     return 0;
 }
 
+// todo: Tokenization and page parsing needs a massive cleanup. Everything there is temporary.
+
 int main(int ArgCount, char** Args) {
     if (ArgCount >= 2) {
         // This code is pretty bad w/e
@@ -754,7 +903,24 @@ int main(int ArgCount, char** Args) {
 
         SolveRelativeDirectory(Directory);
         ConvertPathSlashes(Directory);
-        HandleDirectory(Directory);
+        ProcessDirectory(Directory);
+
+        // Generate the html files
+        for (int i = 0; i < PageCount; ++i) {
+            ProcessedPage* File = (Pages + i);
+            FILE* Out = fopen(File->HTMLOutputFilename, "w+");
+            if (!Out) {
+                printf("Failed to open '%s'.", File->HTMLOutputFilename);
+            }
+
+            if (File->HTMLOutputFilename) {
+                OutputHTMLHeader(Out, File);
+                OutputHTMLFromPageSyntaxTree(File->Root, Out, Pages, PageCount);
+                OutputHTMLFooter(Out, File);
+            }
+
+            fclose(Out);
+        }
     } else {
         fprintf(stderr, "Usage: %s <site directory>\n", Args[0]);
         return 1;
