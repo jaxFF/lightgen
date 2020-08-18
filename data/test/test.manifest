@@ -1,2 +1,3 @@
-Test string
-// test
+name "Testing website"
+abstract "This is an simple example site."
+url "https://test.xyz"

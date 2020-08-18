@@ -74,9 +74,9 @@ global b32 IsNumeric(char Value) {
 
 global b32 IsSymbolic(char Value) {
     b32 Result = (Value == '*' || Value == '|' 
-                || Value == ',' || Value == '.'
-                || Value == ';' || Value == ':'
-                || Value == '=' || Value == '!' || Value == '?');
+                || Value == '`' || Value == '{'
+                || Value == '}' || Value == '_' 
+                || Value == '~');
     return Result;
 }
 
@@ -591,146 +591,8 @@ ProcessedPage ParsePageFile(tokenizer Tokenizer, PageParseArguments* Data) {
                 Parsing = false;
             } break;
 
-            case Token_EndOfLine: {
-                AST_PageNode* Node = AllocateASTPageNode();
-                Node->Type = ASTPageToken_NewLine;
-                *Last = Node;
-                Last = &(*Last)->Next;
-            } break;
-
-            case Token_Asterisk: {
-                if (BoldLeft && TokenEquals(GetToken(&Tokenizer), Token_Asterisk)) { // This is a bold right
-                    // Actually increment the tokenizer now that we've checked
-                    //Token = GetToken(&Tokenizer);
-                    
-                    BoldLeft = false;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_RightBold;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                } else if (TokenEquals(GetToken(&Tokenizer), Token_Asterisk)) { // This is a bold left
-                    // Actually increment the tokenizer now that we've checked
-                    //Token = GetToken(&Tokenizer);
-                    
-                    BoldLeft = true;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_LeftBold;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                } else if (ItalicsLeft) { // This is a italics right because one Asterisk
-                    ItalicsLeft = false;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_RightItalics;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                } else { // This is a italics left because one Asterisk
-                    ItalicsLeft = true;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_LeftItalics;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                }
-            } break;
-
-            case Token_Underline: {
-                if (UnderlineLeft && TokenEquals(GetToken(&Tokenizer), Token_Underline)) {
-                    // Actually increment the tokenizer now that we've checked
-                    //Token = GetToken(&Tokenizer);
-
-                    // This is a underline right
-                    UnderlineLeft = false;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_RightUnderline;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                } else if (TokenEquals(GetToken(&Tokenizer), Token_Underline)) {
-                    // Actually increment the tokenizer now that we've checked
-                    //Token = GetToken(&Tokenizer);
-                    
-                    UnderlineLeft = true;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_LeftUnderline;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                } else if (ItalicsLeft) {  // This is an italics right
-                    ItalicsLeft = false;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_RightItalics;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                } else { // This is an italics left
-                    ItalicsLeft = true;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_LeftItalics;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                }
-            } break;
-
-            case Token_Tilde: {
-                if (StrikethroughLeft && TokenEquals(GetToken(&Tokenizer), Token_Tilde)) { // This is a strikethrough right
-                    StrikethroughLeft = false;
-
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_RightStrikethrough;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                } else if (TokenEquals(GetToken(&Tokenizer), Token_Tilde)) { // This is a strikethrough left
-                    StrikethroughLeft = true;
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_LeftStrikethrough;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-                }
-            } break; 
-
-            case Token_Pound: {
-                if (HeaderCount == 0) { // Define a new header since we're at the start
-                    AST_PageNode* Node = AllocateASTPageNode();
-                    Node->Type = ASTPageToken_Header;
-                    Node->header.HCount = HeaderCount;
-                    *Last = Node;
-                    Last = &(*Last)->Next;
-
-                    HeaderNode = Node;
-                }
-
-                HeaderCount++;
-            } break;
-
-            case Token_Identifier: {
-                printf("Ident%s\n", Token.String);
-
-                if (HeaderCount != 0) { // Update the nodes count and reset since the header is defined now
-                    HeaderNode->header.HCount = HeaderCount;
-                    HeaderCount = 0;
-                }
-                
-                AST_PageNode* Node = AllocateASTPageNode();
-                Node->Type = ASTPageToken_String;
-                Node->Text = make_string(Token.String);
-                *Last = Node;
-                Last = &(*Last)->Next;
-            } break;
-
-            case Token_String: {
-                printf("%s\n", Token.String);
-            } break;
-
-            case Token_Unknown:
             default: {
-                if (StringsMatch((CharToString(Token)).String, ">")) {
-                    Token = PeekTokenSkipSpace(&Tokenizer);
-                }
-                printf("");
+                printf("%s, %.*s\n", GetTokenTypeName(Token.Type).Data, (int)Token.Text.Count, Token.Text.Data);
             } break;
          }
     }
@@ -780,21 +642,8 @@ ProcessedManifest ParseManifestFile(tokenizer Tokenizer, ManifestParseArguments*
             Parsing = false;
         } break;
 
-        case Token_Pound: {
-            printf("");
-        } break;
-
-        case Token_Identifier: {
-            printf("%s\n", Token.String);
-        } break;
-
-        case Token_String: {
-            printf("%s\n", Token.String);
-        } break;
-
-        case Token_Unknown:
         default: {
-            printf("");
+            printf("%s, %.*s\n", GetTokenTypeName(Token.Type).Data, (int)Token.Text.Count, Token.Text.Data);
         } break;
         }
     }
